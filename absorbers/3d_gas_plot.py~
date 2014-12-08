@@ -21,7 +21,7 @@ to_directory        = 'SP/32x32/z_3d/'
 pfname = "RD0020/RD0020"
 line_file_name = to_directory + "QSO_data_absorbers.out"
 absorber_output = to_directory + "absorbers/absorberList.pickle"
-overwrite_list = True
+overwrite_list = False
 
 center     = np.array([0.49730353,  0.50146712,  0.5017492]) # in code units
 R_vir  = 1.85 # Mpc

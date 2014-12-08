@@ -15,25 +15,32 @@ except:
     import pickle
 
 ## mencoder "mf://*.png" -mf w=800:h=600:fps=2:type=png -ovc copy -oac copy -o movie.avi
-    
-to_directory        = 'SP/32x32/z_3d/'
-#to_directory = "SP/7x7/3d_test_run/"
-pfname = "RD0020/RD0020"
-line_file_name = to_directory + "QSO_data_absorbers.out"
-absorber_output = to_directory + "absorbers/absorberList.pickle"
-overwrite_list = True
 
-center     = np.array([0.49730353,  0.50146712,  0.5017492]) # in code units
-R_vir  = 1.85 # Mpc
-vel_arrows = False
 
-DEFAULT_ARROW_TIME = 3.15E13 / 75.0
+DEFAULT_ARROW_TIME = 5.0E16
 
 class GalCluster:
-    def __init__(self, pf, center, R_vir):
+    def __init__(self, pf, center, R_vir, inputfile=None):
         self.pf = pf
         self.center= center
         self.R_vir = R_vir # in Mpc!!
+        
+        if not inputfile == None:
+            try:
+                f = file(inputfile,'rb')
+                c = pickle.load(f)
+                self = c
+                f.close()
+            except:
+                print inputfile , " does not exist"        
+        
+        
+    def save(self, output):
+        f = file(output,'wb')
+        pickle.dump(self, f, -1)
+        f.close()
+    
+    
 
 
 def saveAbsorberList(absorbers, outputfile):
@@ -315,10 +322,10 @@ class AbsorberPlot:
  
             if a.plot:
                 pos = a.pos
-
-                xpos.append(pos[0])
-                ypos.append(pos[1])
-                zpos.append(pos[2])
+                conv = self.cluster.pf['Mpc'] / self.cluster.pf['cm'] / self.cluster.R_vir
+                xpos.append(pos[0]/self.cluster.R_vir)
+                ypos.append(pos[1]/self.cluster.R_vir)
+                zpos.append(pos[2]/self.cluster.R_vir)
 
                 # this is bad... need to fix to generalize to take an arbitrary
                 # color value decided by user at any point.
@@ -342,7 +349,7 @@ class AbsorberPlot:
         # color bar
        # if np.size(self.fig.axes) > 1:
        #     self.fig.delaxes(self.fig.axes[1])
-       
+     
        
         try:
             cbar = self.cbar
@@ -387,11 +394,12 @@ class AbsorberPlot:
         # need to draw arrows all at once.... not one by one
         
         for a in self.absorbers:
-            xi = a.pos
-            xf = a.arrowEndPoint(t)
+            if a.plot:
+                xi = a.pos
+                xf = a.arrowEndPoint(t)
         
-            coords = np.array([xi,xf]).flatten()
-            s3d.drawArrow(coords, self.ax, color = "black")
+                coords = np.array([xi,xf]).flatten()
+                s3d.drawArrow(coords, self.ax, color = "black")
             
     def clearArrows(self):
         """
@@ -408,15 +416,33 @@ class AbsorberPlot:
         
         print "THIS DOES NOTHING RIGHT NOW!!!!"
     
-    def rotate_plot(self, elevation, azim, outputStr):
+    def rotate_plot(self, elevation, azim, outputStr,counter_persist=False):
         """
+        set counter_persist to true in order to keep the output image number 
+        counter going. This allows for more complex movie making. For example,
+        changing color scale after a rotation in the axis without having
+        to do some messy editing of the image frame names after generation. Set
+        False (default) to start from 0 each time.
         """
-        i = 0
+        
+        
+        # check if counter exists already
+        if counter_persist:
+            try:
+                i = self.frame_counter
+            except:
+                i = 0
+        else:
+            i = 0
+        
         for az in azim:
             self.ax.view_init(elev=elevation,azim=az)
             self.fig.canvas.draw()
-            ap.fig.savefig(outputStr + "%06d.png"%(i))
+            self.fig.savefig(outputStr + "%06d.png"%(i))
             i = i+1
+        
+        if counter_persist:
+            self.frame_counter = i
         
    # def animate(self, 
     
@@ -436,7 +462,7 @@ def losVel(los,ray):
     
     return vlos/(1000.0*100.0) # convert from cm/s to km/s
 
-def find_absorber_position_velocity(pf, ray, cz):
+def find_absorber_position_velocity(pf, ray, cz, abs_N, pec_vel=True):
     """
         Given the pf, yt ray object of the line of sight, and the fitted
         velocity of the absorber, this function gives the most likely physical
@@ -456,43 +482,139 @@ def find_absorber_position_velocity(pf, ray, cz):
     l = ((start[0] - end[0])**2 + (start[1]-end[1])**2 + (start[2]-end[2])**2)**0.5
     l = l * pf['Mpc'] # length in Mpc
     
-    vlos = losVel(los, ray)
+
     vH   = (ray['t'] * l) * pf.hubble_constant * 100.0 # in km/s
+
+
+    if pec_vel:
+        vlos = losVel(los, ray)
+    else:
+        vlos = np.zeros(np.size(vH))
+#    vH   = (ray['t'] * l) * pf.hubble_constant * 100.0 # in km/s
     vtot = vH + vlos
     
     ray_N = ray['HI_NumberDensity'] * ray['CellVolume']**(1.0/3.0) # cm^-2
-    
+  #  ray_vx = ray['x-velocity']
+  #  ray_vy = ray['y-velocity']
+  #  ray_vz = ray['z-velocity']
+  #  ray_vmag = 
     # the physical position of the absorber is going to be the cell that is
     # closest to the fitted cz of the absorber....
     # it may be best, however, to pick the top 5 cells (arbitrary number), then
     # take whichever of those 5 has the highest HI column ..... 
-    diff = np.abs(vtot - cz)
-    nearest = diff.argsort()[:8] # may want to play around with ##....
     
-    absorber_index = np.where( ray_N == np.max(ray_N[nearest]) )
+    absorber_index = find_absorber_index(ray_N, abs_N, vtot, cz, method='vselect')
+    
 
-    absorber_vH    = vH[absorber_index][0] # found the physical (vH) of the abs
+    
+   # if np.size(absorber_index) >= 1:
+    print absorber_index
+    try:
+        try:
+            absorber_index = absorber_index[0][0]
+        except:   
+            absorber_index = absorber_index[0]
+    except:
+        absorber_index = absorber_index
+    
+#    absorber_index = np.where( ray_N == ray_N[diffN.argsort()[0]] ) 
+        
+#    absorber_index = np.where( ray_N == np.max(ray_N[nearest]) )
+
+    absorber_vH    = vH[absorber_index] # found the physical (vH) of the abs
     absorber_dist  = absorber_vH / (pf.hubble_constant * 100.0) 
    
-    
+
+    print absorber_index
+    print los
+    print absorber_dist
+    print l
+    print start
+
     # find the x y z of the absorber
     pos = los * (absorber_dist / l) + start
+
     
-    vel = np.array([ ray['x-velocity'][absorber_index][0],
-                     ray['y-velocity'][absorber_index][0],
-                     ray['z-velocity'][absorber_index][0]])
+    
+    vel = np.array([ ray['x-velocity'][absorber_index],
+                     ray['y-velocity'][absorber_index],
+                     ray['z-velocity'][absorber_index]])
                   
     params["Velocity"] = vel
-    params["Temperature"] = ray["Temperature"][absorber_index][0]
-    params["Metallicity"] = ray["Metallicity"][absorber_index][0]
+    
+    additional_fields = ["Temperature", "Metallicity", "Density",
+                         "HI_NumberDensity", "CellVolume", 'NumberDensity',
+                         'Pressure', 'MachNumber']
+    
+    for field in additional_fields:
+        params[field] = ray[field][absorber_index]
+    
+    #params["Temperature"] = ray["Temperature"][absorber_index][0]
+   # params["Metallicity"] = ray["Metallicity"][absorber_index][0]
+   # params["Density"] = ray["Density"][absorber_index][0]
+   # params["HI_Density"] = ray["HI_Density"][absorber_index][0]
     
     params['vh'] = absorber_vH
-    params['vpec'] = vlos[absorber_index][0]
+    params['vpec'] = vlos[absorber_index]
+    
+    params['los'] = los
     
     return pos, params
 
+def find_absorber_index(ray_N, abs_N, ray_v, abs_v, method='old'):
 
-def plot_gas_3D(cluster,outdir,data, draw_velocity=True):
+    if method == 'old':
+
+        diff = np.abs(vtot - cz)
+        nearest = diff.argsort()[:20] # may want to play around with ##....
+        
+        diffN = np.abs(ray_N - abs_N)
+
+        # this is pretty gross, should rewrite to something nicer
+        
+        absorber_index = np.where( diffN == diffN[nearest][diffN[nearest].argsort()[0]]  )
+
+
+    elif method == 'new':
+        # calculate error for both... play around with 'minimum' error
+    #    ray_N, abs_N = np.log10(ray_N), np.log10(abs_N)
+
+        err_N = np.abs( (ray_N - abs_N)/ (abs_N) )
+        err_v = np.abs( (ray_v - abs_v)/ (abs_v) )
+        
+        # try multiply first
+        total_err = err_N + err_v
+        
+        absorber_index = np.argmin(total_err)
+        
+        
+    elif method == 'distance':
+    
+      #  ray_N, abs_N = np.log10(ray_N), np.log10(abs_N)
+        distance = (((ray_N-abs_N)/abs_N)**2 + ((ray_v-abs_v)/abs_v)**2)**0.5
+        
+        absorber_index = np.argmin(distance)
+    
+    elif method == 'vselect':
+        vcut = 75.0 # within +/- 50 km/s
+        
+        # select nearest xx in velocity space
+        shifted_v = ray_v - abs_v # cz is now v=0
+        
+        outside_range = np.abs(shifted_v) >= vcut
+    
+        ray_N[outside_range] = 1.0E50 # shift ray_N to silly values
+        
+        err_N = np.abs( (ray_N - abs_N) / abs_N )
+        
+        absorber_index = np.argmin(err_N)
+    
+    
+    return absorber_index
+
+
+
+def plot_gas_3D(cluster,outdir,data, draw_velocity=True, pec_vel=True):
     """
         Function takes in the relevant pf, output directory, QSO
         data, virial radius, and center of the cluster in order
@@ -534,7 +656,7 @@ def plot_gas_3D(cluster,outdir,data, draw_velocity=True):
         # absorber information:
         N, b, z = data['HI_N'][i], data['b'][i], data['z'][i]
         cz      = z * 2.998E5 # abs velocity in km/s
-    
+        QSO_id  = data['QSO_id']
         
         # line of sight vector
         los   = end - start
@@ -543,18 +665,21 @@ def plot_gas_3D(cluster,outdir,data, draw_velocity=True):
         ray = pf.h.ray(start, end)            
     
         # find absorber position along the ray
-        pos, params = find_absorber_position_velocity(pf, ray, cz)
+        pos, params = find_absorber_position_velocity(pf, ray, cz, N, pec_vel=pec_vel)
         
         
         # recenter so that the center of the cluster is at [0,0,0]
         pos = pos - center
         
         # convert to Mpc then to virial radii 
-        pos = pos * pf['Mpc'] / R_vir
+        pos = pos * pf['cm'] #/ R_vir
 
         # convert velocity to axis units
-        params["Velocity"] = params["Velocity"] * 100.0 * 1000.0 / pf['cm'] * pf['Mpc'] / R_vir
+        params["Velocity"] = params["Velocity"]# / pf['cm'] * pf['Mpc'] / R_vir
         params['HI_Column_Density'] = N
+        params['b'] = b
+        params['cz'] = cz
+        params['QSO_id'] = QSO_id
 
         # draw the arrows
         # t is set right now at a Myr / 100.0
@@ -566,45 +691,6 @@ def plot_gas_3D(cluster,outdir,data, draw_velocity=True):
 
     return all_absorbers
     # draw the arrow
-
-# load the pf
-pf = load(pfname)
-
-
-# load the fitted lines data
-
-
-cluster = GalCluster(pf,center,R_vir)
-
-
-
-if not os.path.isfile(absorber_output) or overwrite_list:
-    data = np.genfromtxt(line_file_name,names=True)
-    all_points = plot_gas_3D(cluster,to_directory,data,draw_velocity=vel_arrows)
-    saveAbsorberList(all_points, absorber_output)
-else:
-    all_points = loadAbsorberList(absorber_output)
-
-
-
-#aplot = AbsorberPlot(all_points,cluster)
-#aplot.set_plot(fig,ax,points)
-
-#
-ap = AbsorberPlot(all_points,GalCluster)
-ap.create_plot_base()
-
-ap.drawSphere(1.0,"red")
-ap.drawSphere(2.0,"blue")
-#ap.plot_points(cparam="Metallicity")
-ap.plot_points(cparam="Temperature")
-ap.ax.set_xlabel(r"R$_{vir}$")
-ap.ax.set_ylabel(r"R$_{vir}$")
-ap.ax.set_zlabel(r"R$_{vir}$")
-
-azim = np.arange(0,360,0.5)
-ap.fig.show()
-#ap.rotate_plot(40,azim,to_directory+"absorbers/temperature/")
 
 
 

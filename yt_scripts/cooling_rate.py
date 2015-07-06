@@ -29,13 +29,34 @@ from utilities.physical_constants import \
      sec_per_Gyr, \
      cm_per_mpc
 
-def define_cooling(ds, grackle_data_file = "CloudyData_UVB=HM2012.h5",check=1):
+import os.path
+
+def define_cooling(ds, grackle_data_file = "CloudyData_UVB=HM2012.h5",
+                       grackle_data_dir  = './'):
     """
     Function loads grackle chemistry settings in order to compute the cooling 
     time and rate from a dataset. Function defines two fields, 'cooling_rate' and
     'cooling_time'.
     """
 
+    local_grackle_data_dir = '/home/emerick/storage/projects/yt_scripts/'
+
+    if not os.path.isfile(grackle_data_dir + grackle_data_file):
+        # try current directory
+        if not os.path.isfile('./' + grackle_data_file):
+       
+            # if not current, use file stored in directory as this script
+            if os.path.isfile(local_grackle_data_dir + grackle_data_file):
+                grackle_data_dir = local_grackle_data_dir
+            
+            else:
+                print 'WARNING GRACKLE FILE NOT FOUND'
+        else:
+            grackle_data_dir = './'
+    
+    
+    grackle_data_file = grackle_data_dir + grackle_data_file
+    
     # do some grackle-y things
     my_chemistry = chemistry_data()
     my_chemistry.use_grackle = 1
@@ -50,23 +71,20 @@ def define_cooling(ds, grackle_data_file = "CloudyData_UVB=HM2012.h5",check=1):
     my_chemistry.grackle_data_file = grackle_data_file;
 
     # potentially useful parameters
-#    my_chemistry.UVbackgroun
+    my_chemistry.UVbackground = 1
     my_chemistry.photoelectric_heating = 1
 
     # Set the units for the data set... this should be done carefully
     # and may not work universally
     my_chemistry.comoving_coordinates = 0
-    my_chemistry.length_units         = ds.length_unit.convert_to_units('cm').value
-    my_chemistry.density_units        = ds.mass_unit.convert_to_units('g').value / my_chemistry.length_units**3
-    my_chemistry.time_units           = 1.0
-    my_chemistry.velocity_units       = ds.velocity_unit.convert_to_units('cm/s').value
+    my_chemistry.length_units         = 1.0#ds.length_unit.convert_to_units('cm').value
+    my_chemistry.density_units        = 1.0#ds.mass_unit.convert_to_units('g').value / my_chemistry.length_units**3
+    my_chemistry.time_units           = 1.0#ds.time_unit.convert_to_units('s').value
+    my_chemistry.velocity_units       = 1.0#ds.velocity_unit.convert_to_units('cm/s').value
     my_chemistry.a_units              = 1.0
 
-    # constant in cgs
-    gravitational_constant = 6.67259E-8 * my_chemistry.density_units * my_chemistry.time_units**2
-
+    # set to 1.0 if in proper frame (when my_chemistry.comoving_coordinates = 0)
     a_value = 1.0
-
     my_chemistry.initialize(a_value)
 
 
@@ -131,9 +149,9 @@ def define_cooling(ds, grackle_data_file = "CloudyData_UVB=HM2012.h5",check=1):
         return cooling_time / dynamical_time
 
     # add the fields to the data set
-    ds.add_field('cooling_time', function=_cooling_time, units='s',force_override=True)
-    ds.add_field('cooling_rate', function=_cooling_rate, units='erg/s *cm**3',force_override=True)
-    ds.add_field('CoolingTimeDynamicalTimeRatio',
+    ds.add_field(('gas','cooling_time'), function=_cooling_time, units='s',force_override=True)
+    ds.add_field(('gas','cooling_rate'), function=_cooling_rate, units='erg/s *cm**3',force_override=True)
+    ds.add_field(('gas','CoolingTimeDynamicalTimeRatio'),
                  function=_cooling_time_dynamical_time_ratio, units='', force_override=True)
 
 ##

@@ -144,14 +144,47 @@ def define_cooling(ds, grackle_data_file = "CloudyData_UVB=HM2012.h5",
         """
  
         cooling_time = data['cooling_time'].convert_to_units('s')
-        dynamical_time = data['dynamical_time'].convert_to_units('s')
+
+        dynamical_time = data['global_dynamical_time'].convert_to_units('s')
 
         return cooling_time / dynamical_time
 
+
+    def _ne_precipitation(field,data):
+        """
+        Precipitation regulated electron number desnity as given by Eq 1
+        in Voit et. al. 2015
+        """
+
+        k = yt.physical_constants.kboltz
+
+        # ne = A ( (ne+ni)/(2ni) ) , A = (3kT)/(10*cool_rate*freefalltime)
+        # ne - A/2ni * ne = A/2
+        # ne (1 - A/2ni) = A/2
+        # ne = A/2 / (1 - A/2ni)
+        # ne = 1 / (2/A - 1/ni)
+
+        #
+        A = 3.0 * k * data['temperature'] / \
+               (10.0 * data['cooling_rate'] * data['dynamical_time']) 
+
+        # hard code this... not good...
+        ni = data['H_p1_number_density' ]  + \
+             data['He_p1_number_density'] + \
+             data['He_p2_number_density'] + \
+             data['H2_p1_number_density']
+
+        return (1.0 / ((2.0/A) - (1.0/ni))).convert_to_units('cm**(-3)')
+
+    #
+
+    def _cell_volume(field,data):
+        return (data['dx'] * data['dy'] * data['dz']).convert_to_units('cm**(3)')
     # add the fields to the data set
     ds.add_field(('gas','cooling_time'), function=_cooling_time, units='s',force_override=True)
     ds.add_field(('gas','cooling_rate'), function=_cooling_rate, units='erg/s *cm**3',force_override=True)
     ds.add_field(('gas','CoolingTimeDynamicalTimeRatio'),
                  function=_cooling_time_dynamical_time_ratio, units='', force_override=True)
-
+    ds.add_field(('gas','ne_precipitation'), function=_ne_precipitation, units='cm**(-3)', force_override=True)
+    ds.add_field(('gas','cell_volume'),function=_cell_volume,units='cm**(3)')
 ##
